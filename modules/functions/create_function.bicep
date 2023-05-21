@@ -1,6 +1,6 @@
 // SET MODULE DATE
 param module_metadata object = {
-  module_last_updated : '2023-05-19'
+  module_last_updated : '2023-05-20'
   owner: 'miztiik@github'
 }
 
@@ -10,6 +10,8 @@ param tags object
 param logAnalyticsWorkspaceId string
 param enableDiagnostics bool = true
 
+param r_usr_mgd_identity_name string
+
 param saName string
 param funcSaName string
 
@@ -17,7 +19,13 @@ param blobContainerName string
 
 param svc_bus_ns_name string
 param svc_bus_q_name string
-param r_usr_mgd_identity_name string
+param svc_bus_topic_name string
+param sales_events_subscriber_name string
+
+
+param cosmos_db_accnt_name string
+param cosmos_db_name string
+param cosmos_db_container_name string
 
 // Get Storage Account Reference
 resource r_sa 'Microsoft.Storage/storageAccounts@2021-06-01' existing = {
@@ -29,9 +37,18 @@ resource r_sa_1 'Microsoft.Storage/storageAccounts@2021-06-01' existing = {
   name: funcSaName
 }
 
+resource r_blob_Ref 'Microsoft.Storage/storageAccounts/blobServices/containers@2021-04-01' existing = {
+  name: '${saName}/default/${blobContainerName}'
+}
+
 // Reference existing User-Assigned Identity
 resource r_userManagedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: r_usr_mgd_identity_name
+}
+
+// Get Cosmos DB Account Ref
+resource r_cosmos_db_accnt 'Microsoft.DocumentDB/databaseAccounts@2022-08-15' existing = {
+  name: cosmos_db_accnt_name
 }
 
 // Get Service Bus Namespace Reference
@@ -92,6 +109,10 @@ resource r_fn_app_settings 'Microsoft.Web/sites/config@2021-03-01' = {
   name: 'appsettings' // Reservered Name
   properties: {
     AzureWebJobsStorage: 'DefaultEndpointsProtocol=https;AccountName=${funcSaName};EndpointSuffix=${environment().suffixes.storage};AccountKey=${r_sa_1.listKeys().keys[0].value}'
+    // AzureWebJobsStorage__accountName: funcSaName
+    // AzureWebJobsStorage__clientId: r_userManagedIdentity.properties.clientId
+    // AzureWebJobsStorage__credential: 'managedidentity'
+    AzureFunctionsJobHost__logging__LogLevel__Default: funcParams.funcLogLevel
     FUNCTION_APP_EDIT_MODE: 'readwrite'
     WEBSITE_CONTENTAZUREFILECONNECTIONSTRING: 'DefaultEndpointsProtocol=https;AccountName=${funcSaName};EndpointSuffix=${environment().suffixes.storage};AccountKey=${r_sa_1.listKeys().keys[0].value}'
     WEBSITE_CONTENTSHARE: toLower(funcParams.funcNamePrefix)
@@ -102,16 +123,51 @@ resource r_fn_app_settings 'Microsoft.Web/sites/config@2021-03-01' = {
     // ENABLE_ORYX_BUILD: 'true'
     // SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
 
-    SVC_BUS_FQDN: '${svc_bus_ns_name}.servicebus.windows.net'
-    SVC_BUS_Q_NAME: svc_bus_q_name
-
     WAREHOUSE_STORAGE: 'DefaultEndpointsProtocol=https;AccountName=${saName};EndpointSuffix=${environment().suffixes.storage};AccountKey=${r_sa.listKeys().keys[0].value}'
     WAREHOUSE_STORAGE_CONTAINER: blobContainerName
-    SUBSCRIPTION_ID: subscription().subscriptionId
-    RESOURCE_GROUP: resourceGroup().name
-    AZURE_CLIENT_ID: r_userManagedIdentity.properties.clientId
+
+    // SETTINGS FOR MANAGED IDENTITY AUTHENTICAION
     // https://github.com/microsoft/azure-container-apps/issues/442#issuecomment-1272352665
-    // AZURE_TENANT_ID: r_userManagedIdentity.properties.tenantId
+    // SUBSCRIPTION_ID: subscription().subscriptionId
+    // RESOURCE_GROUP: resourceGroup().name
+
+    AZURE_CLIENT_ID: r_userManagedIdentity.properties.clientId
+
+    // SETTINGS FOR STORAGE ACCOUNT
+    SA_CONNECTION__accountName: saName
+    SA_CONNECTION__clientId: r_userManagedIdentity.properties.clientId
+    SA_CONNECTION__credential: 'managedidentity'
+    SA_CONNECTION__serviceUri: 'https://${saName}.blob.${environment().suffixes.storage}'
+    SA_CONNECTION__blobServiceUri: 'https://${saName}.blob.${environment().suffixes.storage}' // Producer - https://warehousejwnff5001.blob.core.windows.net
+    // SA_CONNECTION__queueServiceUri: 'https://${saName}.queue.${environment().suffixes.storage}'
+    BLOB_SVC_ACCOUNT_URL: r_sa.properties.primaryEndpoints.blob
+    SA_NAME: r_sa.name
+    BLOB_NAME: blobContainerName
+
+    // SETTINGS FOR SERVICE BUS
+    SVC_BUS_CONNECTION__fullyQualifiedNamespace: '${svc_bus_ns_name}.servicebus.windows.net'
+    SVC_BUS_CONNECTION__credential: 'managedidentity'
+    SVC_BUS_CONNECTION__clientId: r_userManagedIdentity.properties.clientId
+    
+    SVC_BUS_FQDN: '${svc_bus_ns_name}.servicebus.windows.net'
+    SVC_BUS_Q_NAME: svc_bus_q_name
+    SVC_BUS_TOPIC_NAME: svc_bus_topic_name
+    SALES_EVENTS_SUBSCRIPTION_NAME: sales_events_subscriber_name
+
+
+    // SETTINGS FOR COSMOS DB
+    COSMOS_DB_CONNECTION__accountEndpoint: r_cosmos_db_accnt.properties.documentEndpoint
+    COSMOS_DB_CONNECTION__credential: 'managedidentity'
+    COSMOS_DB_CONNECTION__clientId: r_userManagedIdentity.properties.clientId
+
+
+    COSMOS_DB_URL: r_cosmos_db_accnt.properties.documentEndpoint
+    COSMOS_DB_NAME: cosmos_db_name
+    COSMOS_DB_CONTAINER_NAME: cosmos_db_container_name
+
+    // EVENT HUB CONNECTION SETTINGS
+    // EVENT_HUB_CONNECTION__fullyQualifiedNamespace: '${eventHubNamespaceName}.servicebus.windows.net'
+
   }
   dependsOn: [
     r_sa
@@ -148,103 +204,63 @@ resource r_fn_app_logs 'Microsoft.Web/sites/config@2021-03-01' = {
   ]
 }
 
-// resource r_fn_1 'Microsoft.Web/sites/functions@2022-03-01' existing={
-//   name: '${funcParams.funcNamePrefix}-consumer-fn'
-// }
+// Add permissions to the Function App identity
+// Azure Built-In Roles Ref: https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles
 
-// Create Function
+var storageBlobDataContributor_RoleDefinitionId = resourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 
-/*
-resource r_fn_1 'Microsoft.Web/sites/functions@2022-03-01' = {
-  // name: '${funcParams.funcNamePrefix}-consumer-fn-${deploymentParams.global_uniqueness}'
-  name: '${funcParams.funcNamePrefix}-consumer-fn'
-  parent: r_fn_app
+resource r_attach_blob_contributor_perms_to_role 'Microsoft.Authorization/roleAssignments@2020-10-01-preview' = {
+  name:  guid('r_storageBlobDataContributorRoleAssignment', r_blob_Ref.id, storageBlobDataContributor_RoleDefinitionId)
+  scope: r_blob_Ref
   properties: {
-    // config_href: 'https://allotment-dev-uks-allotment-api.azurewebsites.net/admin/vfs/site/wwwroot/ConfirmEmail/function.json'
-    invoke_url_template: 'https://${r_fn_app.name}.azurewebsites.net/api/sayhi'
-    test_data: '{"method":"get","queryStringParams":[{"name":"miztiik-automation","value":"yes"}],"headers":[],"body":{"body":""}}'
-    config: {
-      disabled: false
-      bindings: [
-        // {
-        //   "name": "blobTrigger",
-        //   "type": "timerTrigger",
-        //   "direction": "in",
-        //   "schedule": "0 0 * * * *",
-        //   "connnection": "AzureWebJobsStorage",
-        //   "path": "blob/{test}"
-        //  },
-        // {
-        //   authLevel: 'anonymous'
-        //   type: 'httpTrigger'
-        //   direction: 'in'
-        //   name: 'req'
-        //   webHookType: 'genericJson'
-        //   methods: [
-        //     'get'
-        //     'post'
-        //   ]
-        // }
-        // {
-        //   name: 'miztProc'
-        //   type: 'blob'
-        //   direction: 'in'
-        //   path: '{data.url}'
-        //   connection: 'WAREHOUSE_STORAGE'
-        //   // datatype: 'binary'
-        // }
-        // {
-        //   type: 'eventGridTrigger'
-        //   name: 'event'
-        //   direction: 'in'
-        // }
-        // {
-        //   type: 'blob'
-        //   direction: 'out'
-        //   name: 'outputBlob'
-        //   // path: '${blobContainerName}/processed/{DateTime}_{rand-guid}_{data.eTag}.json'
-        //   path: '${blobContainerName}/processed/{DateTime}_{data.eTag}.json'
-        //   connection: 'WAREHOUSE_STORAGE'
-        // }
-        // {
-        //   name: '$return'
-        //   direction: 'out'
-        //   type: 'http'
-        // }
-        // {
-        //   type: 'queue'
-        //   name: 'outputQueueItem'
-        //   queueName: 'goodforstage1'
-        //   connection: 'StorageAccountMain'
-        //   direction: 'out'
-        // }
-        // {
-        //   type: 'queue'
-        //   name: 'outputQueueItemWithError'
-        //   queueName: 'badforstage1'
-        //   connection: 'StorageAccountMain'
-        //   direction: 'out'
-        // }
-      ]
-    }
-    files: {
-      '__init__.py': loadTextContent('../../app/__init__.py')
-    }
+    roleDefinitionId: storageBlobDataContributor_RoleDefinitionId
+    principalId: r_userManagedIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+param blobOwnerRoleId string = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+var blobPermsConditionStr= '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write\'}) ) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'${blobContainerName}\'))'
+
+
+// Refined Scope with conditions
+// https://learn.microsoft.com/en-us/azure/templates/microsoft.authorization/roleassignments?pivots=deployment-language-bicep
+
+resource r_attach_blob_owner_perms_to_role 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid('r_attach_blob_owner_perms_to_role', r_userManagedIdentity.id, blobOwnerRoleId)
+  scope: r_blob_Ref
+  properties: {
+    description: 'Blob Owner Permission to ResourceGroup scope'
+    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', blobOwnerRoleId)
+    principalId: r_userManagedIdentity.properties.principalId
+    conditionVersion: '2.0'
+    condition: blobPermsConditionStr
+    principalType: 'ServicePrincipal'
+    // https://learn.microsoft.com/en-us/azure/role-based-access-control/troubleshooting?tabs=bicep#symptom---assigning-a-role-to-a-new-principal-sometimes-fails
+  }
+}
+
+// Assign the custom role to the user-assigned managed identity
+var cosmosDbDataContributor_RoleDefinitionId = resourceId('Microsoft.DocumentDB/databaseAccounts/sqlRoleDefinitions', r_cosmos_db_accnt.name, '00000000-0000-0000-0000-000000000002')
+
+resource r_customRoleAssignmentToUsrIdentity 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2021-04-15' = {
+  name:  guid(r_userManagedIdentity.id, r_cosmos_db_accnt.id, cosmosDbDataContributor_RoleDefinitionId, r_sa.id)
+  parent: r_cosmos_db_accnt
+  properties: {
+    // roleDefinitionId: r_cosmodb_customRoleDef.id
+    roleDefinitionId: cosmosDbDataContributor_RoleDefinitionId
+    scope: r_cosmos_db_accnt.id
+    principalId: r_userManagedIdentity.properties.principalId
   }
   dependsOn: [
-    r_fn_app_settings
+    r_userManagedIdentity
   ]
 }
-*/
-
-
-// Add permissions to the Function App identity
-// https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#azure-service-bus-data-owner
 
 var svcBusRoleId='090c5cfd-751d-490a-894a-3ce6f1109419'
 
-resource r_attachSvcBusOwnerPerms_ToRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid('r_attachSvcBusOwnerPerms_ToRole', r_fn_app.id, svcBusRoleId)
+resource r_attach_svc_bus_owner_perms_to_tole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid('r_attach_svc_bus_owner_perms_to_tole', r_fn_app.id, svcBusRoleId)
   scope: r_svc_bus_ns_ref
   properties: {
     description: 'Azure Service Owner Permission to Service Bus Namespace scope'

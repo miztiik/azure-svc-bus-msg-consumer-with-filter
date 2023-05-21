@@ -1,14 +1,6 @@
-# Orchestrating Events with Azure Service Bus and Azure Functions using Managed Identity
+# Orchestrating Events with Azure Service Bus Message Filters and Azure Functions using Managed Identity
 
-Mystique Unicorn's developers are seeking assistance in implementing event processing for orchestrating events across multiple applications and services using Azure's native capabilities. Can you provide guidance on how to accomplish this?
-
-## 🎯 Solution
-
-We can leverage Azure Service Bus and the Python SDK for orchestrating events. Azure Service Bus provides a reliable messaging platform for event orchestration. In this demo, an Azure Function with a managed identity will produce events and send them to a queue within a specific service bus namespace. The managed identity is exclusively scoped to this service bus namespace. By leveraging the power of Bicep, all necessary resources can be easily provisioned and managed with minimal effort.
-
-**Note**: Azure functions need this `AZURE_CLIENT_ID` environment variable for getting the auth token from AAD, [Thanks to this github issue][10] and this one [here][11] for the solution.
-
-Our function will generate the following event with custom properties and also set the time to live to `1` day.
+Mystique Unicorn's developers are in need of guidance to implement event processing for orchestrating events across multiple applications and services, utilizing Azure's native capabilities. They aim to have the ability to filter specific spends based on certain properties. For instance, they want to filter events that are classified as `sale_event` and have a `discount` greater than `20`. This filtering mechanism would be valuable for analyzing business metrics such as `total_sales` and `total_discounts`, as well as detecting potential fraudulent activity.
 
 ```json
 {
@@ -32,16 +24,34 @@ Our function will generate the following event with custom properties and also s
 }
 ```
 
-Message custom properties,
+Event properties,
 
 ```json
 {
    "event_type":"sale_event",
    "priority_shipping":false,
+   "discount":10
 }
 ```
 
-![Miztiik Automation - Orchestrating Events with Azure Service Bus and Azure Functions using Managed Identity](images/miztiik_architecture_azure_functions_to_service_bus_using_managed_identity_001.png)
+ Can you provide guidance on how to accomplish this?
+
+## 🎯 Solution
+
+We can utilize the capabilities of Azure Service Bus Topic to [filter messages][1] based on message properties. Currently, there is [no capability to filter messages based on the message body itself][2]. Therefore, any attribute required for filtering needs to be included in the message property.
+
+In this demonstration, an Azure Function with a managed identity will generate events and send them to a topic within a designated service bus namespace. To support the filtering process, `4` subscriptions have been created for this topic.
+
+- `All Events` : Uses the SQL Filter `1=1`
+- `Inventory_Events` : Uses the Correlation filter to find events of type `inventory_event`
+- `Sale_Events`: Uses the Correlation filter to find events of type `sale_event`
+- `Fraud_Events`: Uses the SQL Filter `event_type = 'sale_event' AND discount > 20`
+
+The consumer function utilizes a subscription trigger on the `sale_events` topic to consume events from the topic. It then processes and persists these events to an Azure Storage Account and Cosmos DB. To ensure secure and controlled access to the necessary resources, a scoped managed identity with RBAC (Role-Based Access Control) permissions is employed. Additionally, the trigger connection is authenticated using a managed identity.
+
+By leveraging the capabilities of Bicep, all the required resources can be easily provisioned and managed with minimal effort. Bicep simplifies the process of defining and deploying Azure resources, allowing for efficient resource management.
+
+![Miztiik Automation - Orchestrating Events with Azure Service Bus Message Filters and Azure Functions using Managed Identity](images/miztiik_architecture_event_orchestration_with_azure_service_bus_and_functions_msg_filters_001.png)
 
 1. ## 🧰 Prerequisites
 
@@ -51,16 +61,16 @@ Message custom properties,
    - 🛠 Bicep Installed & Configured - [Get help here](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/install)
    - 🛠 VS Code & Bicep Extenstions - [Get help here](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/install#vs-code-and-bicep-extension)
 
-1. ## ⚙️ Setting up the environment
+2. ## ⚙️ Setting up the environment
 
    - Get the application code
 
      ```bash
-     https://github.com/miztiik/azure-function-producer-to-service-bus
-     cd azure-function-producer-to-service-bus
+     https://github.com/miztiik/azure-svc-bus-msg-consumer-with-filter
+     cd azure-svc-bus-msg-consumer-with-filter
      ```
 
-1. ## 🚀 Prepare the environment
+3. ## 🚀 Prepare the environment
 
    Ensure you have Azure Cli and bicep working
 
@@ -70,18 +80,26 @@ Message custom properties,
    az account show
     ```
 
-1. ## 🚀 Deploying the application
+4. ## 🚀 Deploying the application
 
    - **Stack: Main Bicep**
      We will create the following resoureces
-     - General purpose Storage Account
-        - This will be used by Azure functions to store the function code
-     - Servie Bus Namespace
-       - Service Bus Queue
-     - Managed Identity
+     - **Storage Accounts** for storing the events
+       - General purpose Storage Account - Used by Azure functions to store the function code
+       - `warehouse**` -  Azure Function will store the events here
+     - **Servie Bus Namespace**
+       - Service Bus Topic, with following subscriptions
+         - `All Events`
+         - `Inventory_Events`
+         - `Sale_Events`
+         - `Fraud_Events`
+     - **Managed Identity**
         - This will be used by the Azure Function to interact with the service bus
-     - Python Azure Function
-        - `HTTP` Trigger
+     - **Python Azure Function**
+        - **Producer**: `HTTP` Trigger. Customized to send `count` number of events to the service bus, using parameters passed in the query string. `count` defaults to `10`
+        - **Consumer**: `Service Bus Topic Subscription` Trigger. The trigger uses managed identity to authenticate to the service bus.
+     - **Cosmos DB**
+        - This will be used by the Azure Function to store the events
 
       ```bash
       # make deploy
@@ -90,41 +108,48 @@ Message custom properties,
 
       After successfully deploying the stack, Check the `Resource Groups/Deployments` section for the resources.
 
-1. ## 🔬 Testing the solution
+5. ## 🔬 Testing the solution
 
    - **Trigger the function**
 
       ```bash
-      FUNC_URL="https://fn-producer-**to**-svc-bus-store-backend-fn-app-008.azurewebsites.net/api/store-events-producer-fn"
-      curl ${FUNC_URL}?count=5
+      FUNC_URL="https://svc-bus-msg-filter-store-backend-fn-app-004.azurewebsites.net/api/store-events-producer-fn"
+      curl ${FUNC_URL}?count=10
       ```
 
       You should see an output like this,
 
       ```json
-      {
+         {
          "miztiik_event_processed": true,
-         "msg": "Generated 5 messages",
+         "msg": "Generated 10 messages",
          "resp": {
             "status": true,
-            "tot_msgs": 5,
-            "bad_msgs": 0,
-            "sale_evnts": 3,
+            "tot_msgs": 10,
+            "bad_msgs": 2,
+            "sale_evnts": 8,
             "inventory_evnts": 2,
-            "tot_sales": 152.66
+            "tot_sales": 507.57
          },
-         "count": 5,
-         "last_processed_on": "2023-05-19T17:17:46.440429"
-      }
+         "count": 10,
+         "last_processed_on": "2023-05-21T14:03:45.505416"
+         }
+
       ```
 
-      ![Miztiik Automation - Orchestrating Events with Azure Service Bus and Azure Functions using Managed Identity](images/miztiik_architecture_azure_functions_to_service_bus_using_managed_identity_002.png)
+      Our function has produced `10` messages with `8` of them were `sale_events` and `2` of them were `inventory_events`. We can find the same being processed by sale_events and inventory_events subscriptions. Likewise, we see `8` records blob and cosmos.
 
-1. ## 📒 Conclusion
 
-   Here we have demonstrated how to use Azure functions to process send messages to Azure Service Bus.
+      ![Miztiik Automation - Orchestrating Events with Azure Service Bus Message Filters and Azure Functions using Managed Identity](images/miztiik_architecture_event_orchestration_with_azure_service_bus_and_functions_msg_filters_002.png)
+      ![Miztiik Automation - Orchestrating Events with Azure Service Bus Message Filters and Azure Functions using Managed Identity](images/miztiik_architecture_event_orchestration_with_azure_service_bus_and_functions_msg_filters_003.png)
+      ![Miztiik Automation - Orchestrating Events with Azure Service Bus Message Filters and Azure Functions using Managed Identity](images/miztiik_architecture_event_orchestration_with_azure_service_bus_and_functions_msg_filters_004.png)
+      ![Miztiik Automation - Orchestrating Events with Azure Service Bus Message Filters and Azure Functions using Managed Identity](images/miztiik_architecture_event_orchestration_with_azure_service_bus_and_functions_msg_filters_005.png)
+
+6. ## 📒 Conclusion
+
+   In this demonstration, we have showcased the utilization of Azure Functions to send messages to Azure Service Bus and leverage message filters to perform actions on specific messages. This approach allows for efficient message processing and enables targeted handling based on specific criteria.
   
-1. ## 🧹 CleanUp
+7. ## 🧹 CleanUp
 
    If you want to destroy all the resources created by the stack, Execute the below command to delete the stack, or _you can delete the stack from console as well_
 
@@ -154,11 +179,15 @@ Thank you for your interest in contributing to our project. Whether it is a bug 
 
 ### 📚 References
 
+1. [Azure Docs - Service Bus Topic Filters][1]
+1. [Azure Docs - Service Bus Topic Filter Limitations][2]
 1. [Azure Docs - Managed Identity][8]
 1. [Azure Docs - Managed Identity Caching][9]
 1. [Gitub Issue - Default Credential Troubleshooting][10]
 1. [Gitub Issue - Default Credential Troubleshooting][11]
 
+[1]: https://learn.microsoft.com/en-us/azure/service-bus-messaging/topic-filters
+[2]: https://learn.microsoft.com/en-us/azure/service-bus-messaging/topic-filters#usage-patterns
 [8]: https://learn.microsoft.com/en-us/azure/active-directory/managed-identities-azure-resources/overview
 [9]: https://learn.microsoft.com/en-us/azure/app-service/overview-managed-identity?tabs=portal%2Chttp#configure-target-resource
 [10]: https://github.com/microsoft/azure-container-apps/issues/442

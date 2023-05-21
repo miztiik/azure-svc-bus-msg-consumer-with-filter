@@ -1,6 +1,6 @@
 // SET MODULE DATE
 param module_metadata object = {
-  module_last_updated : '2023-05-19'
+  module_last_updated : '2023-05-21'
   owner: 'miztiik@github'
 }
 
@@ -192,32 +192,6 @@ resource r_managed_run_cmd_CustomTable 'Microsoft.OperationalInsights/workspaces
     }
   }
 }
-
-/*
-
-resource eventHubNamespace 'Microsoft.EventHub/namespaces@2021-11-01' = {
-  name: eventHubNamespaceName
-  location: location
-  sku: {
-    name: 'Standard'
-    tier: 'Standard'
-    capacity: 1
-  }
-  properties: {
-    isAutoInflateEnabled: false
-    maximumThroughputUnits: 0
-  }
-}
-
-resource eventHub 'Microsoft.EventHub/namespaces/eventhubs@2021-11-01' = {
-  parent: eventHubNamespace
-  name: eventHubName
-  properties: {
-    messageRetentionInDays: 7
-    partitionCount: 1
-  }
-}
-*/
 
 // OUTPUTS
 output module_metadata object = module_metadata

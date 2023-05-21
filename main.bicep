@@ -10,6 +10,7 @@ param storageAccountParams object
 param logAnalyticsWorkspaceParams object
 param funcParams object
 param serviceBusParams object
+param cosmosDbParams object
 
 param brandTags object
 
@@ -34,6 +35,17 @@ module r_app_config 'modules/app_config/create_app_config.bicep' = {
   params: {
     deploymentParams:deploymentParams
     appConfigParams: appConfigParams
+    tags: tags
+  }
+}
+
+// Create Cosmos DB
+module r_cosmosdb 'modules/database/cosmos.bicep' ={
+  name: '${cosmosDbParams.cosmosDbNamePrefix}_${deploymentParams.global_uniqueness}_cosmos_db'
+  params: {
+    deploymentParams:deploymentParams
+    cosmosDbParams:cosmosDbParams
+    appConfigName: r_app_config.outputs.appConfigName
     tags: tags
   }
 }
@@ -74,6 +86,7 @@ module r_blob 'modules/storage/create_blob.bicep' = {
   }
   dependsOn: [
     r_sa
+    r_logAnalyticsWorkspace
   ]
 }
 
@@ -85,20 +98,28 @@ module r_fn_app 'modules/functions/create_function.bicep' = {
     r_usr_mgd_identity_name: r_usr_mgd_identity.outputs.usr_mgd_identity_name
     funcParams: funcParams
     funcSaName: r_sa.outputs.saName_1
-    saName: r_sa.outputs.saName
-    blobContainerName: r_blob.outputs.blobContainerName
-
-    // appConfigName: r_appConfig.outputs.appConfigName
-
-    svc_bus_ns_name: r_svc_bus.outputs.svc_bus_ns_name
-    svc_bus_q_name: r_svc_bus.outputs.svc_bus_q_name
 
     logAnalyticsWorkspaceId: r_logAnalyticsWorkspace.outputs.logAnalyticsPayGWorkspaceId
     enableDiagnostics: true
     tags: tags
+
+    // appConfigName: r_appConfig.outputs.appConfigName
+
+    saName: r_sa.outputs.saName
+    blobContainerName: r_blob.outputs.blobContainerName
+
+    cosmos_db_accnt_name: r_cosmosdb.outputs.cosmos_db_accnt_name
+    cosmos_db_name: r_cosmosdb.outputs.cosmos_db_name
+    cosmos_db_container_name: r_cosmosdb.outputs.cosmos_db_container_name
+
+    svc_bus_ns_name: r_svc_bus.outputs.svc_bus_ns_name
+    svc_bus_q_name: r_svc_bus.outputs.svc_bus_q_name
+    svc_bus_topic_name: r_svc_bus_topic.outputs.svc_bus_topic_name
+    sales_events_subscriber_name: r_svc_bus_sub_filter.outputs.sales_events_subscriber_name
   }
   dependsOn: [
     r_sa
+    r_logAnalyticsWorkspace
   ]
 }
 
@@ -113,15 +134,34 @@ module r_svc_bus 'modules/integration/create_svc_bus.bicep' = {
   }
 }
 
+// Create Service Bus Topic
+module r_svc_bus_topic 'modules/integration/create_topic.bicep' = {
+  name: '${serviceBusParams.serviceBusNamePrefix}_${deploymentParams.global_uniqueness}_svc_bus_topic'
+  params: {
+    deploymentParams:deploymentParams
+    serviceBusParams:serviceBusParams
+    svc_bus_ns_name: r_svc_bus.outputs.svc_bus_ns_name
+  }
+  dependsOn: [
+    r_svc_bus
+  ]
+}
+
+
 // Create Service Bus Subscription Filter
 module r_svc_bus_sub_filter 'modules/integration/create_queue_subscription.bicep' = {
   name: '${serviceBusParams.serviceBusNamePrefix}_${deploymentParams.global_uniqueness}_svc_bus_sub_filter'
   params: {
     deploymentParams:deploymentParams
     serviceBusParams:serviceBusParams
-    tags: tags
+
+    svc_bus_ns_name: r_svc_bus.outputs.svc_bus_ns_name
+    svc_bus_topic_name: r_svc_bus_topic.outputs.svc_bus_topic_name
+
   }
   dependsOn: [
     r_svc_bus
+    r_svc_bus_topic
   ]
 }
+

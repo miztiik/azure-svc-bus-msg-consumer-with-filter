@@ -22,7 +22,7 @@ logging.info(f'{GREEN_COLOR}This is green text{RESET_COLOR}')
 
 class GlobalArgs:
     OWNER = "Mystique"
-    VERSION = "2023-05-21"
+    VERSION = "2023-05-19"
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
     EVNT_WEIGHTS = {"success": 80, "fail": 20}
     TRIGGER_RANDOM_FAILURES = os.getenv("TRIGGER_RANDOM_FAILURES", True)
@@ -74,8 +74,7 @@ def evnt_producer():
                 "sku": random.randint(18981, 189281),
                 "price": _s,
                 "qty": random.randint(1, 38),
-                # "discount": round(random.random() * 20, 1),
-                "discount": random.randint(16, 60),
+                "discount": round(random.random() * 20, 1),
                 "gift_wrap": bool(random.getrandbits(1)),
                 "variant": random.choice(_variants),
                 "priority_shipping": p_s,
@@ -83,7 +82,6 @@ def evnt_producer():
                 "contact_me": "github.com/miztiik"
             }
             _attr = {
-                "discount": evnt_body["discount"],
                 "event_type": _evnt_type,
                 "priority_shipping": f"{p_s}"
             }
@@ -112,11 +110,8 @@ def evnt_producer():
             # doc.set(func.Document.from_json(json.dumps(evnt_body)))
             # logging.info('Document injestion success')
 
-            # Write To Service Bus Queue
-            write_to_svc_bus_q(evnt_body, _attr)            
-            
-            # Write To Service Bus Topic
-            write_to_svc_bus_topic(evnt_body, _attr)
+            # Write To Service Bus
+            write_to_svc_bus(evnt_body, _attr)
 
             t_msgs += 1
             t_sales += _s
@@ -153,7 +148,7 @@ def _get_n_set_app_config(credential):
     except Exception as e:
         logging.exception(f"ERROR:{str(e)}")
 
-def write_to_svc_bus_q(data, _attr):
+def write_to_svc_bus(data, _attr):
     # Setup up Azure Credentials
     azure_log_level = logging.getLogger("azure").setLevel(logging.ERROR)
     credential = DefaultAzureCredential(logging_enable=False,logging=azure_log_level)
@@ -170,23 +165,9 @@ def write_to_svc_bus_q(data, _attr):
             _r = sender.send_messages(msg_to_send)
             logging.debug(f"Message sent: {json.dumps(_r)}")
 
-def write_to_svc_bus_topic(data, _attr):
-    # Setup up Azure Credentials
-    azure_log_level = logging.getLogger("azure").setLevel(logging.ERROR)
-    credential = DefaultAzureCredential(logging_enable=False,logging=azure_log_level)
-
-    with  ServiceBusClient(GlobalArgs.SVC_BUS_FQDN, credential=credential) as client:
-        with client.get_topic_sender(topic_name=GlobalArgs.SVC_BUS_TOPIC_NAME) as sender:
-            # Sending a single message
-            msg_to_send = ServiceBusMessage(
-                json.dumps(data),
-                time_to_live = datetime.timedelta(days=1),
-                application_properties=_attr
-            )
-            
-            _r = sender.send_messages(msg_to_send)
-            logging.debug(f"Message sent: {json.dumps(_r)}")
-
+            # # Sending a list of messages
+            # messages = [ServiceBusMessage("First message"), ServiceBusMessage("Second message")]
+            # sender.send_messages(messages)
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:

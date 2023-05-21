@@ -75,7 +75,7 @@ def main(msg: func.ServiceBusMessage) -> str:
                "miztiik_event_processed": False}
     msg_body= msg.get_body().decode("utf-8")
     try:
-        
+
         result = json.dumps({
             'message_id': msg.message_id,
             'body': msg.get_body().decode('utf-8'),
@@ -89,7 +89,6 @@ def main(msg: func.ServiceBusMessage) -> str:
             'reply_to_session_id': msg.reply_to_session_id,
             'scheduled_enqueue_time': (msg.scheduled_enqueue_time.isoformat() if
                                     msg.scheduled_enqueue_time else None),
-            'delivery_count': msg.delivery_count,
             'session_id': msg.session_id,
             'time_to_live': msg.time_to_live,
             'to': msg.to,
