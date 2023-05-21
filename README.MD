@@ -51,7 +51,7 @@ The consumer function utilizes a subscription trigger on the `sale_events` topic
 
 By leveraging the capabilities of Bicep, all the required resources can be easily provisioned and managed with minimal effort. Bicep simplifies the process of defining and deploying Azure resources, allowing for efficient resource management.
 
-![Miztiik Automation - Orchestrating Events with Azure Service Bus Message Filters and Azure Functions using Managed Identity](images/miztiik_architecture_event_orchestration_with_azure_service_bus_and_functions_msg_filters_001.png)
+![Miztiik Automation - Orchestrating Events with Azure Service Bus Message Filters and Azure Functions using Managed Identity](images/miztiik_architecture_event_orchestration_with_azure_service_bus_and_functions_msg_filters_0001.png)
 
 1. ## 🧰 Prerequisites
 
@@ -137,8 +137,7 @@ By leveraging the capabilities of Bicep, all the required resources can be easil
 
       ```
 
-      Our function has produced `10` messages with `8` of them were `sale_events` and `2` of them were `inventory_events`. We can find the same being processed by sale_events and inventory_events subscriptions. Likewise, we see `8` records blob and cosmos.
-
+      Our function has produced `10` messages with `8` of them were `sale_events` and `2` of them were `inventory_events`. We can find the same being processed by `sale_events` and `inventory_events` subscriptions. Likewise, we see `8` records in blob and cosmos.
 
       ![Miztiik Automation - Orchestrating Events with Azure Service Bus Message Filters and Azure Functions using Managed Identity](images/miztiik_architecture_event_orchestration_with_azure_service_bus_and_functions_msg_filters_002.png)
       ![Miztiik Automation - Orchestrating Events with Azure Service Bus Message Filters and Azure Functions using Managed Identity](images/miztiik_architecture_event_orchestration_with_azure_service_bus_and_functions_msg_filters_003.png)
